@@ -1,0 +1,6 @@
+[submodule "pokerhole-server"]
+	path = pokerhole-server
+	url = https://github.com/bunnyholes/pokerhole-server.git
+[submodule "pokerhole-cli"]
+	path = pokerhole-cli
+	url = https://github.com/bunnyholes/pokerhole-cli.git
