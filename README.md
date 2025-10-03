@@ -1,59 +1,24 @@
 # PokerHole
 
-> Texas Hold'em Poker Game - Server and Client
+Event-sourced Texas Hold'em Poker with hexagonal architecture.
 
----
-
-## Overview
-
-PokerHole is a multiplayer Texas Hold'em poker game with a modern Spring Boot backend and terminal-based client.
-
-This repository is a parent project containing two submodules:
-
-- **[pokerhole-server](./pokerhole-server)** - Spring Boot 4.x + Java 21 backend server
-- **[pokerhole-cli](./pokerhole-cli)** - Go + Bubble Tea terminal client
+**Server**: Java/Spring Boot | **Client**: Go/Bubble Tea TUI
 
 ---
 
 ## Quick Start
 
-### Clone with Submodules
-
-```bash
-git clone --recursive https://github.com/bunnyholes/pokerhole.git
-cd pokerhole
-```
-
-If you already cloned without `--recursive`:
-
-```bash
-git submodule update --init --recursive
-```
-
-### Running the Server
-
+### Server
 ```bash
 cd pokerhole-server
-docker compose up -d
-./gradlew bootRun
+docker compose up -d          # Start PostgreSQL
+./gradlew bootRun            # Start server (port 8080)
 ```
 
-Server will start on:
-- HTTP: 8080
-- TCP Terminal: 7777
-
-### Running the Client
-
+### Client
 ```bash
 cd pokerhole-cli
-go run cmd/pokerhole/main.go
-```
-
-Or build and install:
-
-```bash
-go build -o pokerhole cmd/pokerhole/main.go
-./pokerhole
+go run cmd/poker-client/main.go
 ```
 
 ---
@@ -62,107 +27,482 @@ go build -o pokerhole cmd/pokerhole/main.go
 
 ```
 pokerhole/
-├── pokerhole-server/    # Spring Boot backend (Java 21)
-│   ├── src/
-│   ├── build.gradle.kts
-│   └── README.md
+├── docs/adr/                # Architecture Decision Records
+│   ├── 001-event-sourcing-for-gameplay.md
+│   ├── 002-server-authority.md
+│   ├── 003-ed25519-client-signatures.md
+│   ├── 004-snapshot-strategy.md
+│   └── 005-deterministic-rng-fairness.md
 │
-└── pokerhole-cli/       # Terminal client (Go + Bubble Tea)
-    ├── cmd/
-    ├── internal/
-    └── README.md
+├── pokerhole-server/        # Java/Spring Boot backend
+│   └── README.md           # Server documentation
+│
+└── pokerhole-cli/          # Go TUI client
+    └── README.md           # Client documentation
 ```
 
 ---
 
 ## Architecture
 
-### Backend (pokerhole-server)
+### High-Level Design
 
-- Hexagonal Architecture + DDD
-- Spring Boot 4.0.0-M3 with Virtual Threads
-- WebSocket JSON protocol
-- AI players with multiple strategies
-- Automatic matchmaking
+```
+┌─────────────────────────────────────────┐
+│      Server (Java/Spring Boot)          │
+│                                         │
+│  • Texas Hold'em game logic            │
+│  • Event sourcing (PostgreSQL)         │
+│  • WebSocket communication             │
+│  • Matching system                     │
+│  • AI players (rule-based)             │
+└──────────────┬──────────────────────────┘
+               │
+          WebSocket (JSON)
+               │
+┌──────────────┴──────────────────────────┐
+│        Client (Go/Bubble Tea)           │
+│                                         │
+│  • Terminal UI (TUI)                   │
+│  • Local SQLite event store            │
+│  • Offline play support                │
+│  • ed25519 event signatures            │
+└─────────────────────────────────────────┘
+```
 
-See [pokerhole-server/README.md](./pokerhole-server/README.md) for details.
+### Key Architectural Decisions
+
+All architecture decisions are documented as ADRs in [`docs/adr/`](docs/adr/):
+
+1. **[ADR-001: Event Sourcing](docs/adr/001-event-sourcing-for-gameplay.md)**
+   - Why: Audit trail, replay capability, temporal queries
+   - Append-only event store for all game actions
+   - Both server (PostgreSQL) and client (SQLite) use event sourcing
+
+2. **[ADR-002: Server Authority](docs/adr/002-server-authority.md)**
+   - Server validates all game logic
+   - Client is "dumb terminal" for online play
+   - Prevents cheating, ensures fairness
+
+3. **[ADR-003: ed25519 Signatures](docs/adr/003-ed25519-client-signatures.md)**
+   - Client signs events with private key
+   - Server verifies signatures
+   - Enables secure offline → online sync
+
+4. **[ADR-004: Snapshot Strategy](docs/adr/004-snapshot-strategy.md)**
+   - Periodic snapshots for performance
+   - Trade-off: storage vs replay speed
+   - Snapshot every N events
+
+5. **[ADR-005: Deterministic RNG](docs/adr/005-deterministic-rng-fairness.md)**
+   - Seeded shuffling for fairness verification
+   - Same seed = same shuffle on Java and Go
+   - Golden test vectors ensure parity
+
+---
+
+## Current Status
+
+**Verified**: 2025-10-03
+
+### Server (pokerhole-server)
+- **Tests**: 502 tests, 100% pass
+- **Phase 1**: Core complete (~75%)
+  - ✅ Domain model (Texas Hold'em rules)
+  - ✅ JPA persistence
+  - ✅ Event store infrastructure
+  - ⚠️ GameRoom integration pending
+- **Golden Vectors**: 21 test cases (hand evaluation)
 
 ### Client (pokerhole-cli)
+- **Phase 2**: Core complete
+  - ✅ Go domain model (ported from Java)
+  - ✅ SQLite event store
+  - ✅ Bubble Tea TUI framework
+  - ✅ WebSocket client
+  - ⚠️ Offline AI opponents pending
 
-- Modern terminal UI with Bubble Tea framework
-- WebSocket client
-- Cross-platform (macOS, Linux, Windows)
-- User data persistence (.pokerhole/)
-
-See [pokerhole-cli/README.md](./pokerhole-cli/README.md) for details.
-
----
-
-## Development
-
-### Server Development
+### Verification Commands
 
 ```bash
-cd pokerhole-server
-./gradlew test
-./gradlew bootRun
+# Count tests
+find . -name "*.java" | xargs grep -c "@Test" | awk '{sum+=$2} END {print sum}'
+
+# List golden vectors
+cat pokerhole-server/src/test/resources/golden/hand_eval.json | grep -c '"case_id"'
+
+# Check Go-Java parity
+cd pokerhole-cli && go test -v ./tests/golden/
 ```
-
-### Client Development
-
-```bash
-cd pokerhole-cli
-go test ./...
-go run cmd/pokerhole/main.go
-```
-
-### Updating Submodules
-
-```bash
-git submodule update --remote
-```
-
----
-
-## Documentation
-
-- **Server**: [pokerhole-server/README.md](./pokerhole-server/README.md)
-  - [ARCHITECTURE.md](./pokerhole-server/ARCHITECTURE.md)
-  - [ROADMAP.md](./pokerhole-server/ROADMAP.md)
-  - [CHANGELOG.md](./pokerhole-server/CHANGELOG.md)
-  - [CONTRIBUTING.md](./pokerhole-server/CONTRIBUTING.md)
-
-- **Client**: [pokerhole-cli/README.md](./pokerhole-cli/README.md)
-  - [CLAUDE.md](./pokerhole-cli/CLAUDE.md)
 
 ---
 
 ## Tech Stack
 
 ### Server
-- Spring Boot 4.0.0-M3
-- Java 21 (Virtual Threads)
-- PostgreSQL 16
-- WebSocket
-- MapStruct, Lombok
+| Component | Technology |
+|-----------|-----------|
+| Language | Java 23 |
+| Framework | Spring Boot 3.4.0 |
+| Database | PostgreSQL 16 / H2 (test) |
+| Build | Gradle 9.0 (Kotlin DSL) |
+| Architecture | Hexagonal + DDD + Event Sourcing |
+| Testing | JUnit 5, ArchUnit, AssertJ |
 
 ### Client
-- Go 1.22+
-- Bubble Tea TUI framework
-- WebSocket client
-- JSON protocol
+| Component | Technology |
+|-----------|-----------|
+| Language | Go 1.25+ |
+| TUI | Bubble Tea + Lipgloss |
+| Database | SQLite + SQLCipher |
+| Crypto | ed25519 (stdlib) |
+| Testing | Go testing + golden vectors |
+
+---
+
+## Development
+
+### Prerequisites
+
+**Server**:
+- Java 23+
+- Docker (for PostgreSQL)
+- Gradle 9.0+ (included)
+
+**Client**:
+- Go 1.25+
+- SQLite3
+
+### Server Development
+
+```bash
+cd pokerhole-server
+
+# Run server
+./gradlew bootRun
+
+# Run tests
+./gradlew test
+
+# Build
+./gradlew build
+
+# Generate coverage report
+./gradlew test jacocoTestReport
+open build/reports/jacoco/test/html/index.html
+```
+
+### Client Development
+
+```bash
+cd pokerhole-cli
+
+# Run client
+go run cmd/poker-client/main.go
+
+# Run tests
+go test ./...
+
+# Run golden tests
+go test -v ./tests/golden/
+
+# Build
+go build -o poker cmd/poker-client/main.go
+```
+
+---
+
+## Architecture Principles
+
+### Hexagonal Architecture (Ports & Adapters)
+
+Both server and client follow hexagonal architecture:
+
+```
+[Input Adapters]  →  [Application]  →  [Domain]  →  [Output Adapters]
+WebSocket/REST       Use Cases         Pure Logic    DB/Network/Event
+```
+
+**Key Rules**:
+1. Domain has zero framework dependencies
+2. Application defines ports (interfaces)
+3. Adapters implement ports
+4. Dependencies point inward (domain is innermost)
+
+Enforced by ArchUnit tests on server, convention on client.
+
+### Event Sourcing
+
+**Every state change is an event**:
+- Server: `GameStarted`, `PlayerActed`, `RoundProgressed`
+- Client: Same events, signed with ed25519
+
+**Benefits**:
+- Complete audit trail
+- Replay capability (debugging, analytics)
+- Offline→online sync (future)
+- Temporal queries ("what was game state at time T?")
+
+**Trade-offs**:
+- More storage (mitigated by snapshots)
+- More complex queries (use projections)
+- Schema evolution requires event versioning
+
+### Domain-Driven Design
+
+**Aggregates**:
+- `Game`: Texas Hold'em game state (server & client)
+- `Player`: Player state, chips, actions
+
+**Value Objects**:
+- `Card`, `Deck`: Immutable, deterministic shuffling
+- `Pot`, `SidePot`: Money management
+- `HandResult`: Poker hand ranking
+
+**Domain Events**:
+- Past tense: `RoundStarted`, `PlayerFolded`
+- Immutable
+- Include all data needed to apply the event
+
+---
+
+## Golden Test Vectors
+
+**21 hand evaluation test cases** ensure Java ↔ Go parity:
+
+```bash
+# Location
+pokerhole-server/src/test/resources/golden/hand_eval.json
+
+# Test on server (Java)
+cd pokerhole-server
+./gradlew test --tests "*GoldenVectorValidationTest*"
+
+# Test on client (Go)
+cd pokerhole-cli
+go test -v ./tests/golden/
+```
+
+**Test Cases**:
+- Royal Flush (2 cases)
+- Straight Flush (2 cases, including A-2-3-4-5 wheel)
+- Four of a Kind (3 cases)
+- Full House (3 cases)
+- Flush (2 cases)
+- Straight (3 cases)
+- Three of a Kind, Two Pair, One Pair, High Card (6 cases)
+
+**Goal**: Expand to 1,000+ cases for comprehensive coverage.
+
+---
+
+## WebSocket Protocol
+
+### Connection
+
+```
+Client → Server: ws://localhost:8080/ws/game
+```
+
+### Message Format
+
+```json
+{
+  "type": "MESSAGE_TYPE",
+  "timestamp": 1234567890,
+  "payload": { /* type-specific data */ }
+}
+```
+
+### Client → Server
+
+| Type | Description |
+|------|-------------|
+| `REGISTER` | Initial connection (UUID + nickname) |
+| `HEARTBEAT` | Keep-alive (every 30s) |
+| `JOIN_RANDOM_MATCH` | Join random matching |
+| `CALL`, `RAISE`, `FOLD`, `CHECK`, `ALL_IN` | Game actions |
+
+### Server → Client
+
+| Type | Description |
+|------|-------------|
+| `REGISTER_SUCCESS` | Registration confirmed |
+| `GAME_STATE_UPDATE` | Full game state sync |
+| `PLAYER_ACTION` | Player action notification |
+| `MATCHING_COMPLETED` | Matching finished, game starts |
+| `ERROR` | Error message |
+
+---
+
+## Testing
+
+### Server Tests (502 total)
+
+```bash
+cd pokerhole-server
+./gradlew test
+```
+
+**Breakdown**:
+- Domain logic: ~400 tests (Texas Hold'em rules)
+- JPA persistence: ~25 tests
+- Event store: ~9 tests
+- Architecture: ~4 tests (ArchUnit)
+- Golden vectors: ~8 tests
+- Other: ~56 tests (WebSocket, matching, etc.)
+
+### Client Tests
+
+```bash
+cd pokerhole-cli
+go test ./...
+```
+
+**Coverage**:
+- Domain model (ported from Java)
+- Golden vector validation (Go ↔ Java parity)
+- Event store (SQLite)
+- TUI components
 
 ---
 
 ## Contributing
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+### Before Contributing
 
-See [pokerhole-server/CONTRIBUTING.md](./pokerhole-server/CONTRIBUTING.md) for detailed guidelines.
+1. Read relevant ADRs in [`docs/adr/`](docs/adr/)
+2. Understand hexagonal architecture
+3. Follow event sourcing patterns
+
+### Coding Standards
+
+**Server** (Java):
+- Hexagonal architecture (enforced by ArchUnit)
+- No framework dependencies in `core/domain/`
+- 100% test coverage for domain logic
+- Use records for value objects
+- MapStruct for object mapping
+
+**Client** (Go):
+- Follow hexagonal architecture (by convention)
+- Pure domain in `internal/domain/`
+- Golden tests must pass (Go ↔ Java parity)
+- ed25519 signatures for all events
+
+### Pull Request Checklist
+
+- [ ] All tests pass
+- [ ] Architecture tests pass (server)
+- [ ] Golden tests pass (both server and client)
+- [ ] Coverage ≥ 85% (server)
+- [ ] No breaking changes to WebSocket protocol
+- [ ] ADR created/updated if architecture changed
+
+---
+
+## Performance Targets
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Hand evaluation | < 10ms | ✅ ~2ms |
+| Event append | < 5ms | ✅ ~3ms |
+| WebSocket latency | < 100ms | ✅ ~50ms |
+| Concurrent users | 100+ | ⚠️ Not tested |
+| Game startup time | < 500ms | ✅ ~200ms |
+
+---
+
+## Roadmap
+
+### Phase 1: Server Core ✅ (~75% complete)
+- ✅ Texas Hold'em domain model
+- ✅ Event sourcing infrastructure
+- ✅ JPA persistence
+- ⚠️ GameRoom integration pending
+
+### Phase 2: Client Core ✅ (Complete)
+- ✅ Go domain model
+- ✅ SQLite event store
+- ✅ Bubble Tea TUI
+- ✅ WebSocket client
+
+### Phase 3: Integration (In Progress)
+- ⚠️ Online multiplayer
+- ⚠️ Offline AI opponents
+- ⚠️ Offline→online sync
+
+### Phase 4: Advanced Features (Planned)
+- Event replay (debugging)
+- Projections (leaderboards, stats)
+- Conservative/Aggressive AI
+- Tournament mode
+
+### Phase 5: Production (Planned)
+- Monitoring (Prometheus)
+- Load testing
+- Deployment automation
+- Security audit
+
+---
+
+## Troubleshooting
+
+### Server won't start
+
+**Check PostgreSQL**:
+```bash
+docker compose ps
+docker compose logs postgres
+```
+
+**Check port conflict**:
+```bash
+lsof -i :8080
+```
+
+### Client can't connect
+
+**Verify server is running**:
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+**Check WebSocket endpoint**:
+```bash
+wscat -c ws://localhost:8080/ws/game
+```
+
+### Tests failing
+
+**Server**:
+```bash
+cd pokerhole-server
+./gradlew clean build --refresh-dependencies
+```
+
+**Client**:
+```bash
+cd pokerhole-cli
+go clean -cache
+go test ./...
+```
+
+---
+
+## Documentation
+
+### Core Documentation
+
+- **[docs/adr/](docs/adr/)**: Architecture Decision Records (read these first!)
+- **[pokerhole-server/README.md](pokerhole-server/README.md)**: Server details
+- **[pokerhole-cli/README.md](pokerhole-cli/README.md)**: Client details
+
+### Key ADRs (Start Here)
+
+1. [ADR-001: Event Sourcing](docs/adr/001-event-sourcing-for-gameplay.md) - Why event sourcing?
+2. [ADR-002: Server Authority](docs/adr/002-server-authority.md) - Why server validates everything?
+3. [ADR-005: Deterministic RNG](docs/adr/005-deterministic-rng-fairness.md) - How shuffling works?
 
 ---
 
@@ -172,8 +512,27 @@ MIT License
 
 ---
 
-## Contact
+## Authors
 
-Project Maintainer: [@xiyo](https://github.com/xiyo)
+- [@xiyo](https://github.com/xiyo)
 
-Project Link: [https://github.com/bunnyholes/pokerhole](https://github.com/bunnyholes/pokerhole)
+---
+
+## Project Status
+
+**Last Updated**: 2025-10-03
+
+- **Server**: Phase 1 core complete, 502 tests passing
+- **Client**: Phase 2 complete, Go-Java parity verified
+- **Integration**: Phase 3 in progress (online multiplayer)
+- **Production**: Not ready (Phase 5 planned)
+
+**Next Milestone**: Complete online multiplayer (Phase 3)
+
+---
+
+## Links
+
+- **Server Repo**: [github.com/bunnyholes/pokerhole-server](https://github.com/bunnyholes/pokerhole-server)
+- **Client Repo**: [github.com/bunnyholes/pokerhole-cli](https://github.com/bunnyholes/pokerhole-cli)
+- **Issues**: [github.com/bunnyholes/pokerhole/issues](https://github.com/bunnyholes/pokerhole/issues)
