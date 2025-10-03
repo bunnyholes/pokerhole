@@ -106,12 +106,14 @@ All architecture decisions are documented as ADRs in [`docs/adr/`](docs/adr/):
 **Verified**: 2025-10-03
 
 ### Server (pokerhole-server)
-- **Tests**: 502 tests, 100% pass
-- **Phase 1**: Core complete (~75%)
-  - ✅ Domain model (Texas Hold'em rules)
-  - ✅ JPA persistence
-  - ✅ Event store infrastructure
-  - ⚠️ GameRoom integration pending
+- **Tests**: 31 tests, 100% pass
+- **Phase 1**: WebSocket integration (~60%)
+  - ✅ Domain model (HandEvaluator with 21 golden vectors)
+  - ✅ WebSocket matching system (Step 1-3)
+  - ✅ PlayerSession state tracking
+  - ✅ GameCommandService (Step 4 - structure complete)
+  - ⚠️ Integration tests pending (Step 5 - optional)
+  - ⚠️ Game logic TODO (Dealer is simple card comparison, not Texas Hold'em)
 - **Golden Vectors**: 21 test cases (hand evaluation)
 
 ### Client (pokerhole-cli)
@@ -337,20 +339,20 @@ Client → Server: ws://localhost:8080/ws/game
 
 ## Testing
 
-### Server Tests (502 total)
+### Server Tests (31 total)
 
 ```bash
 cd pokerhole-server
 ./gradlew test
 ```
 
-**Breakdown**:
-- Domain logic: ~400 tests (Texas Hold'em rules)
-- JPA persistence: ~25 tests
-- Event store: ~9 tests
-- Architecture: ~4 tests (ArchUnit)
-- Golden vectors: ~8 tests
-- Other: ~56 tests (WebSocket, matching, etc.)
+**Current Coverage**:
+- HandEvaluatorTest: Hand evaluation logic (21 golden test vectors)
+- HexagonalArchitectureTest: Architecture rule enforcement
+- GuestVisitServiceTest: JPA persistence
+- PokerHoleApplicationTest: Application context
+
+**Note**: Full test suite (~500+ tests) planned for Phase 1 completion.
 
 ### Client Tests
 
@@ -415,11 +417,12 @@ go test ./...
 
 ## Roadmap
 
-### Phase 1: Server Core ✅ (~75% complete)
-- ✅ Texas Hold'em domain model
-- ✅ Event sourcing infrastructure
-- ✅ JPA persistence
-- ⚠️ GameRoom integration pending
+### Phase 1: Server Core ⚠️ (~60% complete)
+- ✅ Domain model (HandEvaluator with 21 golden vectors)
+- ✅ WebSocket matching system (Step 1-4)
+- ✅ GameCommandService structure
+- ⚠️ Integration tests pending (Step 5)
+- ⚠️ Game logic incomplete (simple card comparison, not Texas Hold'em)
 
 ### Phase 2: Client Core ✅ (Complete)
 - ✅ Go domain model
@@ -522,12 +525,12 @@ MIT License
 
 **Last Updated**: 2025-10-03
 
-- **Server**: Phase 1 core complete, 502 tests passing
-- **Client**: Phase 2 complete, Go-Java parity verified
-- **Integration**: Phase 3 in progress (online multiplayer)
+- **Server**: Phase 1 WebSocket integration (~60%), 31 tests passing
+- **Client**: Phase 2 structure complete, 0 tests (golden tests pending)
+- **Integration**: Requires server-client protocol alignment
 - **Production**: Not ready (Phase 5 planned)
 
-**Next Milestone**: Complete online multiplayer (Phase 3)
+**Next Milestone**: Server-client protocol alignment + integration tests (see NEXT-STEP.md)
 
 ---
 

@@ -79,8 +79,9 @@ go build -ldflags="-s -w" -o poker cmd/poker-client/main.go
 ### Verification Commands
 
 ```bash
-# Count server tests (should be 502)
-find pokerhole-server -name "*.java" | xargs grep "@Test" | wc -l
+# Count server tests (currently 31)
+./gradlew test --no-daemon
+# Or count @Test annotations: find pokerhole-server/src/test -name "*Test.java" | xargs grep "@Test" | wc -l
 
 # List golden vectors (should be 21)
 cat pokerhole-server/src/test/resources/golden/hand_eval.json | grep -c '"case_id"'
@@ -505,9 +506,9 @@ rm ~/.pokerhole/poker.db
 
 **Last Verified**: 2025-10-03
 
-- **Server**: Phase 1 ~75% complete (502 tests passing)
-- **Client**: Phase 2 complete (Go-Java parity verified via 21 golden tests)
-- **Integration**: Phase 3 in progress (online multiplayer)
+- **Server**: Phase 1 ~60% complete (31 tests passing, Step 1-4 done, Step 5 optional)
+- **Client**: Phase 2 structure complete (0 tests, golden tests pending)
+- **Integration**: Requires server-client protocol alignment (see /NEXT-STEP.md)
 
 **Documentation Structure** (9 files total):
 - `./README.md`: Project overview
