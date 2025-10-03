@@ -1,29 +1,33 @@
-# NEXT-STEP.md - 다음 개발자를 위한 상세 가이드
+# COMPLETED.md - Phase 1 & Phase 2 완료 보고서
 
 **프로젝트**: PokerHole (Event-sourced Texas Hold'em)
 **마지막 업데이트**: 2025-10-04
-**현재 상태**: Phase 1 Step 1-7 완료 ✅ (서버-클라이언트 프로토콜 동기화 완료)
-**진행률**: 87.5% (7/8 steps 완료)
+**현재 상태**: Phase 1 완료 ✅, Phase 2 완료 ✅
+**진행률**: 100% (Phase 1: 8/8 steps, Phase 2: 3/3 features)
 
 ---
 
 ## 🎯 빠른 요약 (TL;DR)
 
 ### 무엇이 완성되었는가?
+
+**Phase 1 (기본 Texas Hold'em)**:
 - ✅ **Texas Hold'em 게임 로직 100% 구현** (Dealer.java)
 - ✅ **WebSocket 실시간 통신** (GameCommandService, GameRoom)
-- ✅ **통합 테스트 49개 모두 통과** (18개 신규 추가)
 - ✅ **서버-클라이언트 프로토콜 동기화** (4개 필드명 수정, 3개 메시지 타입 추가)
+- ✅ **문서 완성** (ADR-002, README, CLAUDE.md)
 
-### 무엇이 남았는가?
-- ⏳ **Step 8**: 문서 업데이트 (ADR-002, README, CLAUDE.md)
-- ⚠️ **선택적 개선사항**: 사이드 팟, 블라인드, 타임아웃 (Phase 2)
+**Phase 2 (고급 기능 - 병렬 구현)**:
+- ✅ **블라인드 시스템** (Small/Big Blind 자동 베팅, 7개 테스트)
+- ✅ **사이드 팟** (ALL_IN 시나리오 처리, 9개 테스트)
+- ✅ **턴 타임아웃** (30초 자동 FOLD, 7개 테스트)
+- ✅ **총 72개 테스트 모두 통과** (Phase 1: 49개 + Phase 2: 23개)
 
 ### 다음 개발자가 알아야 할 핵심
-1. **모든 테스트는 반드시 통과해야 함** (`./gradlew test` → 49/49 passing)
+1. **모든 테스트는 반드시 통과해야 함** (`./gradlew test` → 72/72 passing)
 2. **프로토콜 변경 시 PROTOCOL-COMPARISON.md 참고**
 3. **2개의 중요 버그 수정 완료** (베팅 라운드 로직, CHECK 액션 기록)
-4. **Step 8만 하면 Phase 1 완료**
+4. **Phase 2 기능 병렬 구현** (3개 서브에이전트가 동시에 작업)
 
 ---
 
@@ -1122,122 +1126,140 @@ void check_ShouldFailWhenBetExists() {
 
 ---
 
-## ⚠️ 알려진 제한사항 (Phase 2 개선 대상)
+## ✅ Phase 2 구현 완료 (2025-10-04)
 
-### 1. 사이드 팟 (Side Pot) 미구현
-**파일**: `Dealer.java:520-540` (distributePot 메서드)
+### Phase 2 개요
 
-**현재 구현**:
-```java
-private void distributePot(Map<Player, HandResult> results) {
-    // 단순화: 최고 패를 가진 플레이어에게 전체 팟 지급
-    Player winner = results.entrySet().stream()
-        .max(Map.Entry.comparingByValue())
-        .map(Map.Entry::getKey())
-        .orElseThrow();
+**구현 방식**: 3개 서브에이전트 병렬 실행
+**소요 시간**: 약 15분 (병렬 처리로 시간 단축)
+**추가된 테스트**: 23개 (7 + 9 + 7)
+**전체 테스트**: 72개 (100% passing)
 
-    winner.addChips(pot);
-    pot = 0;
-}
+---
+
+### Feature 1: 블라인드 시스템 ✅
+
+**구현 내용**:
+- Small Blind (50 chips) / Big Blind (100 chips) 자동 베팅
+- 딜러 버튼 위치 기반 블라인드 플레이어 결정
+- 설정 가능한 블라인드 금액
+- 첫 턴 시작 위치 조정 (Big Blind 다음부터)
+
+**주요 변경사항**:
+- `Dealer.java`: `smallBlind`, `bigBlind` 필드 추가
+- `startTexasHoldem()`: 홀카드 배분 전 블라인드 베팅 처리
+- 2-player heads-up 규칙 지원
+
+**테스트**: 7개 (BlindsTest.java)
+- 2-player/3-player 블라인드 포스팅
+- 블라인드 금액 검증
+- 팟 계산 검증
+- 첫 액션 위치 검증
+- 블라인드 설정 변경 가능성 검증
+- 홀카드 딜링 순서 검증
+
+---
+
+### Feature 2: 사이드 팟 ✅
+
+**구현 내용**:
+- ALL_IN 시나리오에서 메인 팟/사이드 팟 분리
+- 여러 플레이어 ALL_IN 시 다중 팟 생성
+- 각 팟별 적격 플레이어 결정
+- 공정한 팟 분배 알고리즘
+
+**주요 변경사항**:
+- `SidePot.java` (NEW): Immutable value object
+- `Dealer.java`:
+  - `createSidePots()`: 복잡한 사이드 팟 로직
+  - `determinePotWinner()`: 적격 플레이어 중 승자 결정
+  - `PlayerBetInfo` record: 내부 사용 데이터 구조
+
+**알고리즘**:
+```
+1. 플레이어를 베팅 금액 오름차순 정렬
+2. 가장 작은 베팅부터 팟 생성
+3. 각 팟: (현재 베팅 - 이전 베팅) × 남은 플레이어 수
+4. 적격 플레이어: 해당 금액 이상 베팅한 모든 플레이어
+5. 각 팟의 승자에게 분배
 ```
 
-**문제 상황**:
+**테스트**: 9개 (SidePotTest.java)
+- 1명 ALL_IN + 2명 정상 베팅 시나리오
+- 2명 ALL_IN (서로 다른 금액) 시나리오
+- 모든 플레이어 ALL_IN 시나리오
+- 에지 케이스 (0 chips, 단일 생존자 등)
+
+---
+
+### Feature 3: 턴 타임아웃 ✅
+
+**구현 내용**:
+- 30초 턴 타이머 (application.yml 설정 가능)
+- 타임아웃 시 자동 FOLD
+- 플레이어 액션 시 타임아웃 취소
+- WebSocket으로 타임아웃 시작/만료 브로드캐스트
+
+**주요 변경사항**:
+- `TurnTimeoutService.java` (NEW):
+  - ScheduledExecutorService로 타임아웃 관리
+  - ConcurrentHashMap으로 활성 타임아웃 추적
+  - @PreDestroy로 graceful shutdown
+- `GameCommandService.java`:
+  - 타임아웃 서비스 통합
+  - 액션 처리 전후 타임아웃 관리
+- `ServerMessageType.java`:
+  - `TURN_TIMEOUT_STARTED` 추가
+  - `PLAYER_TIMED_OUT` 추가
+- `application.yml`:
+  - `pokerhole.game.turn-timeout-seconds: 30`
+
+**스레드 안정성**:
+- 2-thread ScheduledExecutorService
+- ConcurrentHashMap으로 동시성 처리
+- Exception handling으로 안정성 보장
+- Finally block으로 타임아웃 정리 보장
+
+**테스트**: 7개 (TurnTimeoutTest.java)
+- 타임아웃 트리거 및 FOLD 처리
+- 플레이어 액션 시 타임아웃 취소
+- 다중 동시 타임아웃 관리
+- 서비스 종료 시 정리
+- 중복 타임아웃 대체
+- 콜백 예외 처리
+- 존재하지 않는 타임아웃 취소 안전성
+
+---
+
+## ⚠️ 알려진 제한사항 (향후 개선 대상)
+
+### 1. 스플릿 팟 (Split Pot) 미구현
+
+**현재 상태**: 타이(동일한 패) 시 첫 번째 플레이어가 전체 팟 획득
+**필요 기능**: 동일한 패를 가진 여러 플레이어에게 팟 분할
+
+**예시**:
 ```
-Player A: 1,000 칩 ALL_IN
-Player B: 2,000 칩 베팅
-Player C: 2,000 칩 베팅
-
-현재 결과:
-- Winner가 전체 팟 5,000을 가져감 (잘못됨!)
-
-올바른 결과:
-- Main Pot: 3,000 (A, B, C가 경쟁)
-- Side Pot: 2,000 (B, C만 경쟁)
-- Winner 결정:
-  - A가 최고 패: A는 Main Pot 3,000만 가져감
-  - B가 최고 패: B는 Main Pot 3,000 + Side Pot 2,000 = 5,000
-```
-
-**필요한 수정**:
-```java
-private void distributePot(Map<Player, HandResult> results) {
-    // 1. ALL_IN 플레이어별로 사이드 팟 생성
-    List<SidePot> sidePots = createSidePots();
-
-    // 2. 각 팟별로 승자 결정
-    for (SidePot pot : sidePots) {
-        Player potWinner = determinePotWinner(pot.getEligiblePlayers(), results);
-        potWinner.addChips(pot.getAmount());
-    }
-}
-
-private List<SidePot> createSidePots() {
-    // ALL_IN 금액별로 팟 분리 로직
-    // ...
-}
-```
-
-### 2. 블라인드 (Blinds) 미구현
-
-**현재**: 모든 플레이어가 0부터 시작
-**필요**: 스몰 블라인드 / 빅 블라인드 자동 베팅
-
-**필요한 수정**:
-```java
-public void startTexasHoldem() {
-    // 기존 코드...
-
-    // 블라인드 베팅
-    int smallBlindPosition = (dealerButtonPosition + 1) % players.size();
-    int bigBlindPosition = (dealerButtonPosition + 2) % players.size();
-
-    Player smallBlindPlayer = players.get(smallBlindPosition);
-    Player bigBlindPlayer = players.get(bigBlindPosition);
-
-    int smallBlind = 50;  // 설정 가능하게
-    int bigBlind = 100;
-
-    smallBlindPlayer.bet(smallBlind);
-    pot += smallBlind;
-    currentRoundBets.put(smallBlindPlayer, smallBlind);
-
-    bigBlindPlayer.bet(bigBlind);
-    pot += bigBlind;
-    currentBet = bigBlind;
-    currentRoundBets.put(bigBlindPlayer, bigBlind);
-}
+Player A: Ace-High Flush
+Player B: Ace-High Flush (동일한 패)
+Current: A gets all pot
+Needed: A와 B가 팟을 1/2씩 나눔
 ```
 
-### 3. 타임아웃 (Timeout) 미구현
+**구현 난이도**: 중간
 
-**현재**: 플레이어가 무한정 대기 가능
-**필요**: 30초 타임아웃 후 자동 FOLD
+---
 
-**필요한 수정**:
-```java
-// GameCommandService.java
-private ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-private Map<String, ScheduledFuture<?>> timeouts = new ConcurrentHashMap<>();
+### 2. 딜러 버튼 이동 미구현
 
-private void startTurnTimeout(String playerId, GameRoom room) {
-    ScheduledFuture<?> timeout = scheduler.schedule(() -> {
-        // 30초 후 자동 FOLD
-        room.processPlayerActionByNickname(playerId, PlayerAction.FOLD, 0);
-        broadcastMessage("타임아웃으로 " + playerId + " 자동 FOLD");
-    }, 30, TimeUnit.SECONDS);
+**현재 상태**: 딜러 버튼이 고정됨
+**필요 기능**: 각 핸드 종료 후 딜러 버튼을 시계 방향으로 이동
 
-    timeouts.put(playerId, timeout);
-}
+**구현 난이도**: 낮음
 
-private void cancelTurnTimeout(String playerId) {
-    ScheduledFuture<?> timeout = timeouts.remove(playerId);
-    if (timeout != null) {
-        timeout.cancel(false);
-    }
-}
-```
+---
 
-### 4. 핸드 히스토리 (Hand History) 미구현
+### 3. 핸드 히스토리 (Hand History) 미구현
 
 **현재**: 게임 기록이 남지 않음
 **필요**: 각 핸드의 전체 기록 저장
