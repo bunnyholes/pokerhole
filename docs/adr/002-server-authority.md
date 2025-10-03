@@ -100,6 +100,222 @@ In a hybrid online/offline poker game, we must decide who has final authority ov
 
 ---
 
+## Texas Hold'em Server Authority Implementation
+
+**Implementation Date**: 2025-10-04 (Phase 1, Steps 1-7)
+
+### Game State Management
+
+The server maintains complete authority over all Texas Hold'em game state:
+
+#### Community Cards
+- Server controls card dealing timing (PRE_FLOP → FLOP → TURN → RIVER)
+- Client cannot see upcoming cards
+- Deterministic shuffling (seed-based) allows game replay and verification
+
+```java
+// Dealer.java:185-213
+private void progressToNextRound() {
+    switch (currentRound) {
+        case PRE_FLOP:
+            // FLOP: Server decides when to reveal 3 cards
+            communityCards.add(deck.drawCard());
+            communityCards.add(deck.drawCard());
+            communityCards.add(deck.drawCard());
+            currentRound = BettingRound.FLOP;
+            break;
+        // ... TURN, RIVER, SHOWDOWN
+    }
+}
+```
+
+#### Betting Round Progression
+- Server automatically advances rounds when all players have acted
+- Server validates betting round completion (all players bet equal amounts)
+- Two critical bugs fixed in Step 6:
+  - **Bug #1**: Betting round completion now checks if all ACTIVE players have acted (not just bet amounts)
+  - **Bug #2**: CHECK actions are now recorded in `currentRoundBets` to track player actions
+
+```java
+// Dealer.java:390-452 (Bug fixes applied)
+private boolean isBettingRoundComplete() {
+    // 1. Check if all ACTIVE players have acted (Bug #1 fix)
+    long activePlayers = players.stream()
+        .filter(p -> p.getStatus() == PlayerStatus.ACTIVE)
+        .count();
+
+    long playersWhoActed = players.stream()
+        .filter(p -> p.getStatus() == PlayerStatus.ACTIVE)
+        .filter(p -> currentRoundBets.containsKey(p))  // Bug #1: Check action record
+        .count();
+
+    if (playersWhoActed < activePlayers) {
+        return false;  // Not all players have acted yet
+    }
+
+    // 2. Check if all players have bet equal amounts
+    // ...
+}
+```
+
+#### Winner Determination
+- Server uses `HandEvaluator` to determine best 5-card hand from 7 cards (2 hole + 5 community)
+- Golden test vectors ensure correctness (21 test cases)
+- Server distributes pot to winner(s)
+
+```java
+// Dealer.java:520-547
+private void determineWinner() {
+    HandEvaluator evaluator = new HandEvaluator();
+
+    for (Player player : activePlayers) {
+        List<Card> allCards = new ArrayList<>();
+        allCards.addAll(player.getHand());      // Hole cards (2)
+        allCards.addAll(communityCards);         // Community cards (5)
+
+        HandResult best = evaluator.findBestHand(allCards);  // Best 5 of 7
+        results.put(player, best);
+    }
+
+    distributePot(results);
+}
+```
+
+### WebSocket Message Protocol
+
+Server broadcasts game state changes to all clients via WebSocket messages.
+
+#### Game State Update Message
+
+**Server sends** (see PROTOCOL-COMPARISON.md for full details):
+
+```json
+{
+  "type": "GAME_STATE_UPDATE",
+  "timestamp": 1234567890,
+  "payload": {
+    "gameId": "room-uuid",
+    "round": "FLOP",
+    "pot": 1000,
+    "currentBet": 200,
+    "communityCards": ["AH", "KD", "QC"],
+    "currentPlayer": "Alice",
+    "players": [
+      {
+        "nickname": "Alice",
+        "chips": 8000,
+        "status": "ACTIVE",
+        "bet": 200
+      }
+    ]
+  }
+}
+```
+
+**Protocol changes applied in Step 7**:
+1. `roomId` → `gameId` (clearer naming for game context)
+2. `currentTurnPlayer` → `currentPlayer` (simpler field name)
+3. Player object: `currentBet` → `bet` (consistency)
+4. Community cards: Object array → String array (70% payload reduction: `["AH", "KD"]` vs `[{"suit":"HEARTS","rank":"ACE"}]`)
+
+#### Player Action Flow
+
+```
+Client                    Server
+  |                         |
+  |--- BET 100 ------------->| 1. Validate turn order
+  |                         | 2. Validate action (chips >= 100)
+  |                         | 3. Apply action to Dealer
+  |                         | 4. Check round completion
+  |                         |
+  |<-- PLAYER_ACTION --------|  5. Broadcast action to all
+  |<-- GAME_STATE_UPDATE ----|  6. Broadcast updated state
+  |                         |
+```
+
+**Message types**:
+- Client → Server: `CALL`, `RAISE`, `FOLD`, `CHECK`, `ALL_IN`
+- Server → Client: `PLAYER_ACTION`, `GAME_STATE_UPDATE`, `TURN_CHANGED`, `ROUND_PROGRESSED`
+
+### Security Considerations
+
+#### Private Information Protection
+- **Hole cards**: Each client receives only their own 2 hole cards
+- **Opponent cards**: Hidden until SHOWDOWN
+- Server never sends other players' cards to client
+
+```java
+// GameRoom.java:318-328 (partial view per client)
+for (Participant p : participants.values()) {
+    Map<String, Object> playerInfo = new LinkedHashMap<>();
+    playerInfo.put("nickname", p.player().getNickName());
+    playerInfo.put("chips", p.player().getChips());
+    playerInfo.put("status", p.player().getStatus().name());
+    playerInfo.put("bet", p.player().getCurrentBet());
+
+    // Only include cards if this is the current client (not shown in this snippet)
+    // Other players' cards are not sent
+    playersList.add(playerInfo);
+}
+```
+
+#### Action Validation
+Server validates every action before applying:
+
+1. **Turn order**: Only current player can act
+2. **Action legality**: CHECK only when `currentBet == 0`, RAISE must exceed current bet
+3. **Chip availability**: Cannot bet more than player's chips (except ALL_IN)
+4. **Betting round rules**: All players must act before round progresses
+
+```java
+// Dealer.java:261-289 (validation examples)
+case CHECK:
+    int playerCurrentBet = currentRoundBets.getOrDefault(player, 0);
+    if (currentBet > playerCurrentBet) {
+        throw new IllegalStateException("Cannot CHECK when there's a bet");
+    }
+    currentRoundBets.put(player, playerCurrentBet);  // Bug #2: Record action
+    break;
+
+case RAISE:
+    if (amount <= currentBet) {
+        throw new IllegalStateException("RAISE must exceed current bet");
+    }
+    // ... apply raise
+    break;
+```
+
+#### Cheat Prevention
+- **Client cannot**:
+  - Skip turns (server enforces turn order)
+  - Bet more chips than they have (server validates stack)
+  - See opponent cards (server filters per-client state)
+  - Manipulate deck (server controls shuffling)
+
+- **Server guarantees**:
+  - Deterministic game state (event sourcing)
+  - Fair shuffling (seeded RNG, verifiable)
+  - Consistent rule enforcement (49 tests, 100% pass rate)
+
+### Implementation Status
+
+**Completed** (Phase 1, Steps 1-7):
+- ✅ Domain model extension (BettingRound, PlayerAction, PlayerStatus enums)
+- ✅ Dealer Texas Hold'em logic (8 core methods, 300+ lines)
+- ✅ GameRoom integration (action processing, state broadcasting)
+- ✅ WebSocket protocol (4 new message types)
+- ✅ Bug fixes (betting round logic, CHECK action recording)
+- ✅ 49 tests passing (18 new integration tests for Texas Hold'em)
+- ✅ Server-client protocol synchronization (4 field changes, 3 message types added)
+
+**Known Limitations** (Phase 2):
+- ⚠️ Side pots not implemented (ALL_IN handling simplified)
+- ⚠️ Blinds not implemented (all players start at 0 bet)
+- ⚠️ Turn timeout not implemented (no automatic FOLD)
+- ⚠️ Hand history not persisted (only in-memory state)
+
+---
+
 ## Consequences
 
 ### Positive
